@@ -3,9 +3,10 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>זיהוי אובייקטים</title>
+    <title>זיהוי אובייקטים וסריקת ברקודים</title>
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd"></script>
+    <script src="https://unpkg.com/@zxing/library@latest"></script>
     <style>
         body {
             font-family: Arial, sans-serif;
@@ -30,7 +31,7 @@
             width: 100%;
             height: 100%;
         }
-        #toggleButton {
+        button {
             margin: 10px;
             padding: 10px 20px;
             font-size: 16px;
@@ -39,19 +40,27 @@
     </style>
 </head>
 <body>
-    <h1>זיהוי אובייקטים</h1>
+    <h1>זיהוי אובייקטים וסריקת ברקודים</h1>
     <div id="videoContainer">
         <video id="video" autoplay muted></video>
         <canvas id="canvas"></canvas>
     </div>
     <button id="toggleButton">התחל זיהוי</button>
+    <button id="scanBarcodeButton">סרוק ברקוד</button>
     <div id="detectedObjects"></div>
+    <div id="barcodeResult"></div>
 
     <script>
         let video, canvas, ctx, model, detectionInterval;
         let isDetecting = false;
+        let isScanning = false;
         const toggleButton = document.getElementById('toggleButton');
+        const scanBarcodeButton = document.getElementById('scanBarcodeButton');
         const detectedObjectsDiv = document.getElementById('detectedObjects');
+        const barcodeResultDiv = document.getElementById('barcodeResult');
+
+        let foodList = {};
+        let codeReader;
 
         async function setupCamera() {
             video = document.getElementById('video');
@@ -120,10 +129,70 @@
             toggleButton.textContent = 'התחל זיהוי';
         }
 
+        async function loadFoodList() {
+            try {
+                const response = await fetch('FOODLIST.xml');
+                const xmlText = await response.text();
+                const parser = new DOMParser();
+                const xmlDoc = parser.parseFromString(xmlText, 'text/xml');
+                const items = xmlDoc.getElementsByTagName('item');
+                
+                for (let item of items) {
+                    const barcode = item.getElementsByTagName('NUMBARCODE')[0].textContent;
+                    const name = item.getElementsByTagName('NAMEBARCODE')[0].textContent;
+                    foodList[barcode] = name;
+                }
+            } catch (error) {
+                console.error('Error loading FOODLIST.xml:', error);
+            }
+        }
+
+        async function toggleBarcodeScanning() {
+            if (!isScanning) {
+                startBarcodeScanning();
+            } else {
+                stopBarcodeScanning();
+            }
+        }
+
+        async function startBarcodeScanning() {
+            isScanning = true;
+            scanBarcodeButton.textContent = 'הפסקת סריקה';
+            barcodeResultDiv.textContent = 'מחפש ברקוד...';
+            
+            codeReader = new ZXing.BrowserMultiFormatReader();
+            try {
+                const result = await codeReader.decodeOnceFromVideoDevice(undefined, 'video');
+                const barcode = result.getText();
+                if (foodList[barcode]) {
+                    barcodeResultDiv.textContent = `ברקוד: ${barcode}, שם המוצר: ${foodList[barcode]}`;
+                } else {
+                    barcodeResultDiv.textContent = 'לא אותר מוצר מתאים';
+                }
+            } catch (error) {
+                if (isScanning) {  // רק אם עדיין במצב סריקה
+                    console.error('Error scanning barcode:', error);
+                    barcodeResultDiv.textContent = 'שגיאה בסריקת הברקוד. נסה שוב.';
+                }
+            } finally {
+                stopBarcodeScanning();
+            }
+        }
+
+        function stopBarcodeScanning() {
+            isScanning = false;
+            scanBarcodeButton.textContent = 'סרוק ברקוד';
+            if (codeReader) {
+                codeReader.reset();
+            }
+        }
+
         async function init() {
             await setupCamera();
             await loadModel();
+            await loadFoodList();
             toggleButton.addEventListener('click', toggleDetection);
+            scanBarcodeButton.addEventListener('click', toggleBarcodeScanning);
         }
 
         init();
