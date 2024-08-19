@@ -3,138 +3,236 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>זיהוי פירות במצלמה עם TensorFlow.js</title>
+    <title>זיהוי אובייקטים בזמן אמת</title>
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/mobilenet"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/speech-commands"></script>
     <style>
         body {
             font-family: Arial, sans-serif;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            height: 100vh;
             margin: 0;
+            padding: 20px;
             background-color: #f0f0f0;
+            direction: rtl;
         }
         .container {
-            text-align: center;
+            max-width: 800px;
+            margin: 0 auto;
             background-color: white;
             padding: 20px;
             border-radius: 10px;
             box-shadow: 0 0 10px rgba(0,0,0,0.1);
         }
+        h1 {
+            text-align: center;
+            color: #333;
+        }
+        #videoContainer {
+            position: relative;
+            width: 100%;
+            max-width: 640px;
+            margin: 20px auto;
+        }
+        #video {
+            width: 100%;
+            height: auto;
+            border: 1px solid #ccc;
+        }
+        #canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+        }
+        #controls {
+            display: flex;
+            justify-content: center;
+            margin-top: 20px;
+        }
         button {
-            margin: 10px;
+            margin: 0 10px;
             padding: 10px 20px;
             font-size: 16px;
             cursor: pointer;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 5px;
         }
-        #result {
+        button:hover {
+            background-color: #45a049;
+        }
+        button:disabled {
+            background-color: #cccccc;
+            cursor: not-allowed;
+        }
+        #objectCounter, #detectedObjects {
             margin-top: 20px;
-            font-weight: bold;
+            font-size: 18px;
         }
-        #camera {
-            width: 320px;
-            height: 240px;
-            border: 1px solid #ccc;
-            margin: 20px auto;
-            display: none;
+        #speechOutput {
+            margin-top: 20px;
+            font-style: italic;
+            color: #666;
+        }
+
+        /* מובייל אופטימיזציה */
+        @media (max-width: 600px) {
+            body {
+                padding: 10px;
+            }
+            .container {
+                padding: 10px;
+            }
+            button {
+                padding: 15px 30px;
+                font-size: 18px;
+            }
         }
     </style>
 </head>
 <body>
     <div class="container">
-        <h1>זיהוי פירות במצלמה</h1>
-        <button onclick="openCamera()">פתח מצלמה</button>
-        <button onclick="closeCamera()">סגור מצלמה</button>
-        <video id="camera" autoplay></video>
-        <div id="result"></div>
+        <h1>זיהוי אובייקטים בזמן אמת</h1>
+        <div id="videoContainer">
+            <video id="video" autoplay muted></video>
+            <canvas id="canvas"></canvas>
+        </div>
+        <div id="controls">
+            <button id="startButton">התחל זיהוי</button>
+            <button id="stopButton" disabled>עצור זיהוי</button>
+        </div>
+        <div id="objectCounter">אובייקטים ייחודיים שזוהו: 0</div>
+        <div id="detectedObjects"></div>
+        <div id="speechOutput"></div>
     </div>
 
     <script>
-        let isCameraOpen = false;
-        let model;
-        let videoElement;
+        let video, canvas, ctx, model, detectionInterval;
+        const uniqueObjects = new Set();
+        let isDetecting = false;
+        const speechOutput = document.getElementById('speechOutput');
+        const objectCounter = document.getElementById('objectCounter');
+        const detectedObjectsDiv = document.getElementById('detectedObjects');
+        const startButton = document.getElementById('startButton');
+        const stopButton = document.getElementById('stopButton');
 
-        // טעינת המודל
+        // תרגום שמות אובייקטים לעברית
+        const objectTranslations = {
+            'person': 'אדם', 'bicycle': 'אופניים', 'car': 'מכונית', 'motorcycle': 'אופנוע',
+            'airplane': 'מטוס', 'bus': 'אוטובוס', 'train': 'רכבת', 'truck': 'משאית',
+            'boat': 'סירה', 'traffic light': 'רמזור', 'fire hydrant': 'ברז כיבוי',
+            'stop sign': 'תמרור עצור', 'parking meter': 'מד חניה', 'bench': 'ספסל',
+            'bird': 'ציפור', 'cat': 'חתול', 'dog': 'כלב', 'horse': 'סוס',
+            'sheep': 'כבשה', 'cow': 'פרה', 'elephant': 'פיל', 'bear': 'דב',
+            'zebra': 'זברה', 'giraffe': 'ג\'ירפה', 'backpack': 'תיק גב', 'umbrella': 'מטריה',
+            'handbag': 'תיק יד', 'tie': 'עניבה', 'suitcase': 'מזוודה', 'frisbee': 'צלחת מעופפת',
+            'skis': 'מגלשיים', 'snowboard': 'סנובורד', 'sports ball': 'כדור ספורט',
+            'kite': 'עפיפון', 'baseball bat': 'מחבט בייסבול', 'baseball glove': 'כפפת בייסבול',
+            'skateboard': 'סקייטבורד', 'surfboard': 'גלשן', 'tennis racket': 'מחבט טניס',
+            'bottle': 'בקבוק', 'wine glass': 'כוס יין', 'cup': 'כוס', 'fork': 'מזלג',
+            'knife': 'סכין', 'spoon': 'כף', 'bowl': 'קערה', 'banana': 'בננה',
+            'apple': 'תפוח', 'sandwich': 'כריך', 'orange': 'תפוז', 'broccoli': 'ברוקולי',
+            'carrot': 'גזר', 'hot dog': 'נקניקיה', 'pizza': 'פיצה', 'donut': 'סופגנייה',
+            'cake': 'עוגה', 'chair': 'כיסא', 'couch': 'ספה', 'potted plant': 'צמח בעציץ',
+            'bed': 'מיטה', 'dining table': 'שולחן אוכל', 'toilet': 'שירותים',
+            'tv': 'טלוויזיה', 'laptop': 'מחשב נייד', 'mouse': 'עכבר', 'remote': 'שלט',
+            'keyboard': 'מקלדת', 'cell phone': 'טלפון נייד', 'microwave': 'מיקרוגל',
+            'oven': 'תנור', 'toaster': 'טוסטר', 'sink': 'כיור', 'refrigerator': 'מקרר',
+            'book': 'ספר', 'clock': 'שעון', 'vase': 'אגרטל', 'scissors': 'מספריים',
+            'teddy bear': 'דובי', 'hair drier': 'מייבש שיער', 'toothbrush': 'מברשת שיניים'
+        };
+
+        async function setupCamera() {
+            video = document.getElementById('video');
+            canvas = document.getElementById('canvas');
+            ctx = canvas.getContext('2d');
+
+            const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+            video.srcObject = stream;
+
+            return new Promise((resolve) => {
+                video.onloadedmetadata = () => {
+                    canvas.width = video.videoWidth;
+                    canvas.height = video.videoHeight;
+                    resolve(video);
+                };
+            });
+        }
+
         async function loadModel() {
-            model = await mobilenet.load();
-            console.log('מודל MobileNet נטען');
+            model = await cocoSsd.load();
+            startButton.disabled = false;
         }
 
-        loadModel();
+        async function detectObjects() {
+            const predictions = await model.detect(video);
+            ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+            
+            const detectedObjectsSet = new Set();
 
-        async function openCamera() {
-            if (!isCameraOpen) {
-                videoElement = document.getElementById('camera');
-                videoElement.style.display = 'block';
-
-                try {
-                    const stream = await navigator.mediaDevices.getUserMedia({ video: true });
-                    videoElement.srcObject = stream;
-                    isCameraOpen = true;
-                    identifyFruit();
-                } catch (error) {
-                    console.error('שגיאה בפתיחת המצלמה:', error);
-                    document.getElementById('result').innerHTML = 'שגיאה בפתיחת המצלמה';
-                }
-            }
-        }
-
-        function closeCamera() {
-            if (isCameraOpen) {
-                const stream = videoElement.srcObject;
-                const tracks = stream.getTracks();
-                tracks.forEach(track => track.stop());
-                videoElement.style.display = 'none';
-                document.getElementById('result').innerHTML = '';
-                isCameraOpen = false;
-            }
-        }
-
-        async function identifyFruit() {
-            if (isCameraOpen && model) {
-                const result = await model.classify(videoElement);
-                const fruitResult = result.find(item => isFruit(item.className));
+            predictions.forEach(prediction => {
+                const [x, y, width, height] = prediction.bbox;
+                const hebrewLabel = objectTranslations[prediction.class] || prediction.class;
                 
-                if (fruitResult) {
-                    document.getElementById('result').innerHTML = `זוהה פרי: ${hebrewFruitName(fruitResult.className)}`;
-                } else {
-                    document.getElementById('result').innerHTML = 'פרי לא מזוהה';
-                }
+                ctx.strokeStyle = '#00FFFF';
+                ctx.lineWidth = 4;
+                ctx.strokeRect(x, y, width, height);
+                
+                ctx.fillStyle = '#00FFFF';
+                ctx.font = '18px Arial';
+                ctx.fillText(hebrewLabel, x, y > 10 ? y - 5 : 10);
 
-                // המשך לזהות כל 3 שניות
-                setTimeout(identifyFruit, 3000);
+                detectedObjectsSet.add(hebrewLabel);
+                uniqueObjects.add(hebrewLabel);
+            });
+
+            objectCounter.textContent = `אובייקטים ייחודיים שזוהו: ${uniqueObjects.size}`;
+            detectedObjectsDiv.textContent = `אובייקטים בתמונה: ${Array.from(detectedObjectsSet).join(', ')}`;
+
+            if (detectedObjectsSet.size > 0) {
+                const objectsText = Array.from(detectedObjectsSet).join(', ');
+                speak(`זוהו האובייקטים הבאים: ${objectsText}`);
             }
         }
 
-        function isFruit(className) {
-            // רשימה חלקית של פירות באנגלית
-            const fruits = ['apple', 'banana', 'orange', 'strawberry', 'grape', 'pineapple', 'peach', 'pear', 'mango'];
-            return fruits.some(fruit => className.toLowerCase().includes(fruit));
-        }
-
-        function hebrewFruitName(englishName) {
-            // ממיר שמות פירות נפוצים לעברית
-            const fruitNames = {
-                'apple': 'תפוח',
-                'banana': 'בננה',
-                'orange': 'תפוז',
-                'strawberry': 'תות',
-                'grape': 'ענב',
-                'pineapple': 'אננס',
-                'peach': 'אפרסק',
-                'pear': 'אגס',
-                'mango': 'מנגו'
-            };
-
-            for (let fruit in fruitNames) {
-                if (englishName.toLowerCase().includes(fruit)) {
-                    return fruitNames[fruit];
-                }
+        function startDetection() {
+            if (!isDetecting) {
+                isDetecting = true;
+                detectionInterval = setInterval(detectObjects, 500); // כ-2 FPS
+                startButton.disabled = true;
+                stopButton.disabled = false;
             }
-            return englishName; // אם אין תרגום, מחזיר את השם באנגלית
         }
+
+        function stopDetection() {
+            if (isDetecting) {
+                isDetecting = false;
+                clearInterval(detectionInterval);
+                startButton.disabled = false;
+                stopButton.disabled = true;
+            }
+        }
+
+        async function speak(text) {
+            speechOutput.textContent = text;
+            
+            if ('speechSynthesis' in window) {
+                const utterance = new SpeechSynthesisUtterance(text);
+                utterance.lang = 'he-IL';
+                speechSynthesis.speak(utterance);
+            }
+        }
+
+        async function init() {
+            await setupCamera();
+            await loadModel();
+            startButton.addEventListener('click', startDetection);
+            stopButton.addEventListener('click', stopDetection);
+        }
+
+        init();
     </script>
 </body>
 </html>
