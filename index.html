@@ -8,7 +8,90 @@
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd"></script>
     <script src="https://cdn.jsdelivr.net/npm/@zxing/library@0.19.1"></script>
     <style>
-        /* ... (הסגנון נשאר ללא שינוי) ... */
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #f0f0f0;
+            direction: rtl;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background-color: white;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 0 10px rgba(0,0,0,0.1);
+        }
+        h1, h2 {
+            text-align: center;
+            color: #333;
+        }
+        #videoContainer {
+            position: relative;
+            width: 100%;
+            max-width: 640px;
+            margin: 20px auto;
+        }
+        #video {
+            width: 100%;
+            height: auto;
+            border: 1px solid #ccc;
+        }
+        #canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+        }
+        #controls {
+            display: flex;
+            justify-content: center;
+            margin-top: 20px;
+        }
+        button {
+            margin: 0 10px;
+            padding: 10px 20px;
+            font-size: 16px;
+            cursor: pointer;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 5px;
+        }
+        button:hover {
+            background-color: #45a049;
+        }
+        button:disabled {
+            background-color: #cccccc;
+            cursor: not-allowed;
+        }
+        #foodCounter, #detectedFood, #barcodeResult {
+            margin-top: 20px;
+            font-size: 18px;
+        }
+        #newItemForm {
+            margin-top: 20px;
+            display: none;
+        }
+        #newItemForm input, #newItemForm button {
+            margin: 5px;
+            padding: 5px;
+            font-size: 16px;
+        }
+        @media (max-width: 600px) {
+            body {
+                padding: 10px;
+            }
+            .container {
+                padding: 10px;
+            }
+            button {
+                padding: 15px 30px;
+                font-size: 18px;
+            }
+        }
     </style>
 </head>
 <body>
@@ -19,8 +102,7 @@
             <canvas id="canvas"></canvas>
         </div>
         <div id="controls">
-            <button id="startButton">התחל זיהוי מזון</button>
-            <button id="stopButton" disabled>עצור זיהוי</button>
+            <button id="toggleDetectionButton">התחל זיהוי מזון</button>
             <button id="scanBarcodeButton">סרוק ברקוד מוצר</button>
         </div>
         <div id="foodCounter">פריטי מזון ייחודיים שזוהו: 0</div>
@@ -39,8 +121,7 @@
         let isScanningBarcode = false;
         const foodCounter = document.getElementById('foodCounter');
         const detectedFoodDiv = document.getElementById('detectedFood');
-        const startButton = document.getElementById('startButton');
-        const stopButton = document.getElementById('stopButton');
+        const toggleDetectionButton = document.getElementById('toggleDetectionButton');
         const scanBarcodeButton = document.getElementById('scanBarcodeButton');
         const barcodeResultDiv = document.getElementById('barcodeResult');
         const newItemForm = document.getElementById('newItemForm');
@@ -52,7 +133,15 @@
 
         // תרגום שמות מאכלים לעברית
         const foodTranslations = {
-            // ... (התרגומים נשארים ללא שינוי) ...
+            'apple': 'תפוח', 'banana': 'בננה', 'orange': 'תפוז', 'broccoli': 'ברוקולי',
+            'carrot': 'גזר', 'hot dog': 'נקניקיה', 'pizza': 'פיצה', 'donut': 'סופגנייה',
+            'cake': 'עוגה', 'sandwich': 'כריך', 'salad': 'סלט', 'bread': 'לחם',
+            'cheese': 'גבינה', 'egg': 'ביצה', 'meat': 'בשר', 'fish': 'דג',
+            'rice': 'אורז', 'pasta': 'פסטה', 'soup': 'מרק', 'sushi': 'סושי',
+            'hamburger': 'המבורגר', 'french fries': 'צ\'יפס', 'ice cream': 'גלידה',
+            'chocolate': 'שוקולד', 'cookie': 'עוגייה', 'potato': 'תפוח אדמה',
+            'tomato': 'עגבנייה', 'cucumber': 'מלפפון', 'onion': 'בצל', 'garlic': 'שום',
+            'milk': 'חלב', 'yogurt': 'יוגורט', 'butter': 'חמאה', 'olive': 'זית'
         };
 
         async function setupCamera(useBackCamera = false) {
@@ -86,39 +175,81 @@
 
         async function loadModel() {
             model = await cocoSsd.load();
-            startButton.disabled = false;
+            toggleDetectionButton.disabled = false;
         }
 
         async function detectFood() {
-            // ... (הפונקציה נשארת ללא שינוי) ...
+            const predictions = await model.detect(video);
+            ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+            
+            const detectedFoodSet = new Set();
+
+            predictions.forEach(prediction => {
+                if (isFoodItem(prediction.class)) {
+                    const [x, y, width, height] = prediction.bbox;
+                    const hebrewLabel = foodTranslations[prediction.class] || prediction.class;
+                    
+                    ctx.strokeStyle = '#00FFFF';
+                    ctx.lineWidth = 4;
+                    ctx.strokeRect(x, y, width, height);
+                    
+                    ctx.fillStyle = '#00FFFF';
+                    ctx.font = '18px Arial';
+                    ctx.fillText(hebrewLabel, x, y > 10 ? y - 5 : 10);
+
+                    detectedFoodSet.add(hebrewLabel);
+                    uniqueFoodItems.add(hebrewLabel);
+                }
+            });
+
+            foodCounter.textContent = `פריטי מזון ייחודיים שזוהו: ${uniqueFoodItems.size}`;
+            detectedFoodDiv.textContent = `מזון שזוהה בתמונה: ${Array.from(detectedFoodSet).join(', ')}`;
         }
 
         function isFoodItem(className) {
-            // ... (הפונקציה נשארת ללא שינוי) ...
+            return foodTranslations.hasOwnProperty(className) || Object.values(foodTranslations).includes(className);
+        }
+
+        function toggleDetection() {
+            if (!isDetecting) {
+                startDetection();
+            } else {
+                stopDetection();
+            }
         }
 
         function startDetection() {
-            if (!isDetecting) {
-                isDetecting = true;
-                detectionInterval = setInterval(detectFood, 500); // כ-2 FPS
-                startButton.disabled = true;
-                stopButton.disabled = false;
-                scanBarcodeButton.disabled = false;
-            }
+            isDetecting = true;
+            detectionInterval = setInterval(detectFood, 500); // כ-2 FPS
+            toggleDetectionButton.textContent = 'עצור זיהוי';
+            scanBarcodeButton.disabled = false;
         }
 
         function stopDetection() {
-            if (isDetecting) {
-                isDetecting = false;
-                clearInterval(detectionInterval);
-                startButton.disabled = false;
-                stopButton.disabled = true;
-                scanBarcodeButton.disabled = false;
-            }
+            isDetecting = false;
+            clearInterval(detectionInterval);
+            toggleDetectionButton.textContent = 'התחל זיהוי מזון';
+            scanBarcodeButton.disabled = false;
+            ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+            detectedFoodDiv.textContent = '';
         }
 
         async function loadFoodList() {
-            // ... (הפונקציה נשארת ללא שינוי) ...
+            try {
+                const response = await fetch('FOODLIST.xml');
+                const xmlText = await response.text();
+                const parser = new DOMParser();
+                const xmlDoc = parser.parseFromString(xmlText, 'text/xml');
+                const items = xmlDoc.getElementsByTagName('item');
+                
+                for (let item of items) {
+                    const barcode = item.getElementsByTagName('NUMBARCODE')[0].textContent;
+                    const name = item.getElementsByTagName('NAMEBARCODE')[0].textContent;
+                    foodList[barcode] = name;
+                }
+            } catch (error) {
+                console.error('Error loading FOODLIST.xml:', error);
+            }
         }
 
         async function scanBarcode() {
@@ -156,7 +287,7 @@
                 console.error('Error scanning barcode:', error);
                 barcodeResultDiv.textContent = 'שגיאה בסריקת הברקוד. נסה שנית.';
             } finally {
-                // החזרת המצלמה הקדמית והפעלת זיהוי מזון מחדש
+                // החזרת המצלמה הקדמית והפעלת זיהוי מזון מחדש אם היה פעיל
                 await setupCamera(false);
                 if (isDetecting) {
                     startDetection();
@@ -184,8 +315,7 @@
             await setupCamera();
             await loadModel();
             await loadFoodList();
-            startButton.addEventListener('click', startDetection);
-            stopButton.addEventListener('click', stopDetection);
+            toggleDetectionButton.addEventListener('click', toggleDetection);
             scanBarcodeButton.addEventListener('click', scanBarcode);
         }
 
