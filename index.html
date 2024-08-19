@@ -3,10 +3,10 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>זיהוי אובייקטים בזמן אמת</title>
+    <title>זיהוי אובייקטים וסריקת ברקודים</title>
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/speech-commands"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@zxing/library@0.19.1"></script>
     <style>
         body {
             font-family: Arial, sans-serif;
@@ -23,7 +23,7 @@
             border-radius: 10px;
             box-shadow: 0 0 10px rgba(0,0,0,0.1);
         }
-        h1 {
+        h1, h2 {
             text-align: center;
             color: #333;
         }
@@ -67,17 +67,19 @@
             background-color: #cccccc;
             cursor: not-allowed;
         }
-        #objectCounter, #detectedObjects {
+        #objectCounter, #detectedObjects, #barcodeResult {
             margin-top: 20px;
             font-size: 18px;
         }
-        #speechOutput {
+        #newItemForm {
             margin-top: 20px;
-            font-style: italic;
-            color: #666;
+            display: none;
         }
-
-        /* מובייל אופטימיזציה */
+        #newItemForm input, #newItemForm button {
+            margin: 5px;
+            padding: 5px;
+            font-size: 16px;
+        }
         @media (max-width: 600px) {
             body {
                 padding: 10px;
@@ -94,7 +96,7 @@
 </head>
 <body>
     <div class="container">
-        <h1>זיהוי אובייקטים בזמן אמת</h1>
+        <h1>זיהוי אובייקטים וסריקת ברקודים</h1>
         <div id="videoContainer">
             <video id="video" autoplay muted></video>
             <canvas id="canvas"></canvas>
@@ -102,21 +104,33 @@
         <div id="controls">
             <button id="startButton">התחל זיהוי</button>
             <button id="stopButton" disabled>עצור זיהוי</button>
+            <button id="scanBarcodeButton">סרוק ברקוד</button>
         </div>
         <div id="objectCounter">אובייקטים ייחודיים שזוהו: 0</div>
         <div id="detectedObjects"></div>
-        <div id="speechOutput"></div>
+        <div id="barcodeResult"></div>
+        <div id="newItemForm">
+            <input type="text" id="newItemName" placeholder="שם המוצר">
+            <button id="saveNewItem">שמור מוצר</button>
+        </div>
     </div>
 
     <script>
         let video, canvas, ctx, model, detectionInterval;
         const uniqueObjects = new Set();
         let isDetecting = false;
-        const speechOutput = document.getElementById('speechOutput');
         const objectCounter = document.getElementById('objectCounter');
         const detectedObjectsDiv = document.getElementById('detectedObjects');
         const startButton = document.getElementById('startButton');
         const stopButton = document.getElementById('stopButton');
+        const scanBarcodeButton = document.getElementById('scanBarcodeButton');
+        const barcodeResultDiv = document.getElementById('barcodeResult');
+        const newItemForm = document.getElementById('newItemForm');
+        const newItemNameInput = document.getElementById('newItemName');
+        const saveNewItemButton = document.getElementById('saveNewItem');
+
+        let barcodeReader;
+        let foodList = {};
 
         // תרגום שמות אובייקטים לעברית
         const objectTranslations = {
@@ -190,11 +204,6 @@
 
             objectCounter.textContent = `אובייקטים ייחודיים שזוהו: ${uniqueObjects.size}`;
             detectedObjectsDiv.textContent = `אובייקטים בתמונה: ${Array.from(detectedObjectsSet).join(', ')}`;
-
-            if (detectedObjectsSet.size > 0) {
-                const objectsText = Array.from(detectedObjectsSet).join(', ');
-                speak(`זוהו האובייקטים הבאים: ${objectsText}`);
-            }
         }
 
         function startDetection() {
@@ -215,21 +224,68 @@
             }
         }
 
-        async function speak(text) {
-            speechOutput.textContent = text;
-            
-            if ('speechSynthesis' in window) {
-                const utterance = new SpeechSynthesisUtterance(text);
-                utterance.lang = 'he-IL';
-                speechSynthesis.speak(utterance);
+        async function loadFoodList() {
+            try {
+                const response = await fetch('FOODLIST.xml');
+                const xmlText = await response.text();
+                const parser = new DOMParser();
+                const xmlDoc = parser.parseFromString(xmlText, 'text/xml');
+                const items = xmlDoc.getElementsByTagName('item');
+                
+                for (let item of items) {
+                    const barcode = item.getElementsByTagName('NUMBARCODE')[0].textContent;
+                    const name = item.getElementsByTagName('NAMEBARCODE')[0].textContent;
+                    foodList[barcode] = name;
+                }
+            } catch (error) {
+                console.error('Error loading FOODLIST.xml:', error);
+            }
+        }
+
+        async function scanBarcode() {
+            if (!barcodeReader) {
+                barcodeReader = new ZXing.BrowserMultiFormatReader();
+            }
+
+            try {
+                const result = await barcodeReader.decodeOnceFromVideoDevice(undefined, 'video');
+                const barcode = result.getText();
+                
+                if (foodList[barcode]) {
+                    barcodeResultDiv.textContent = `ברקוד: ${barcode}, שם המוצר: ${foodList[barcode]}`;
+                } else {
+                    barcodeResultDiv.textContent = `ברקוד חדש: ${barcode}`;
+                    newItemForm.style.display = 'block';
+                    newItemNameInput.value = '';
+                    saveNewItemButton.onclick = () => saveNewItem(barcode);
+                }
+            } catch (error) {
+                console.error('Error scanning barcode:', error);
+                barcodeResultDiv.textContent = 'שגיאה בסריקת הברקוד. נסה שנית.';
+            }
+        }
+
+        async function saveNewItem(barcode) {
+            const newItemName = newItemNameInput.value.trim();
+            if (newItemName) {
+                foodList[barcode] = newItemName;
+                barcodeResultDiv.textContent = `נשמר בהצלחה! ברקוד: ${barcode}, שם המוצר: ${newItemName}`;
+                newItemForm.style.display = 'none';
+                
+                // כאן תוכל להוסיף קוד לשמירת המידע החדש בקובץ ה-XML
+                // לדוגמה, שליחת בקשת POST לשרת שיעדכן את הקובץ
+            } else {
+                alert('נא להזין שם מוצר');
             }
         }
 
         async function init() {
             await setupCamera();
             await loadModel();
+            await loadFoodList();
             startButton.addEventListener('click', startDetection);
             stopButton.addEventListener('click', stopDetection);
+            scanBarcodeButton.addEventListener('click', scanBarcode);
         }
 
         init();
