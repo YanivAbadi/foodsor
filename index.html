@@ -3,50 +3,25 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>זיהוי מזון וסריקת ברקודים</title>
+    <title>זיהוי אובייקטים בסיסי</title>
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@zxing/library@0.19.1"></script>
-    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.3/css/all.min.css" rel="stylesheet">
     <style>
-        :root {
-            --primary-color: #4CAF50;
-            --secondary-color: #45a049;
-            --background-color: #f0f0f0;
-            --text-color: #333;
-            --border-color: #ccc;
-        }
         body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            font-family: Arial, sans-serif;
             margin: 0;
-            padding: 0;
-            background-color: var(--background-color);
-            color: var(--text-color);
-            direction: rtl;
-        }
-        .container {
-            max-width: 800px;
-            margin: 0 auto;
             padding: 20px;
-        }
-        h1 {
             text-align: center;
-            color: var(--primary-color);
-            margin-bottom: 30px;
         }
         #videoContainer {
             position: relative;
             width: 100%;
             max-width: 640px;
-            margin: 0 auto 20px;
-            border-radius: 10px;
-            overflow: hidden;
-            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            margin: 0 auto;
         }
         #video {
             width: 100%;
             height: auto;
-            display: block;
         }
         #canvas {
             position: absolute;
@@ -55,282 +30,96 @@
             width: 100%;
             height: 100%;
         }
-        #controls {
-            display: flex;
-            justify-content: center;
-            margin-bottom: 20px;
-        }
         button {
-            margin: 0 10px;
+            margin: 10px;
             padding: 10px 20px;
             font-size: 16px;
-            cursor: pointer;
-            background-color: var(--primary-color);
-            color: white;
-            border: none;
-            border-radius: 5px;
-            transition: background-color 0.3s ease;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-        }
-        button:hover {
-            background-color: var(--secondary-color);
-        }
-        button:disabled {
-            background-color: var(--border-color);
-            cursor: not-allowed;
-        }
-        button i {
-            margin-left: 8px;
-        }
-        #foodCounter, #detectedFood, #barcodeResult {
-            background-color: white;
-            padding: 15px;
-            border-radius: 5px;
-            margin-bottom: 15px;
-            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-        }
-        #newItemForm {
-            background-color: white;
-            padding: 15px;
-            border-radius: 5px;
-            margin-top: 20px;
-            display: none;
-            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-        }
-        #newItemForm input {
-            width: calc(100% - 22px);
-            padding: 10px;
-            margin-bottom: 10px;
-            border: 1px solid var(--border-color);
-            border-radius: 5px;
-        }
-        #newItemForm button {
-            width: 100%;
-        }
-        @media (max-width: 600px) {
-            .container {
-                padding: 10px;
-            }
-            button {
-                padding: 12px 20px;
-                font-size: 14px;
-            }
         }
     </style>
 </head>
 <body>
-    <div class="container">
-        <h1>זיהוי מזון וסריקת ברקודים</h1>
-        <div id="videoContainer">
-            <video id="video" autoplay muted></video>
-            <canvas id="canvas"></canvas>
-        </div>
-        <div id="controls">
-            <button id="toggleDetectionButton"><i class="fas fa-play"></i> התחל זיהוי מזון</button>
-            <button id="scanBarcodeButton"><i class="fas fa-barcode"></i> סרוק ברקוד</button>
-            <button id="toggleCameraButton"><i class="fas fa-camera"></i> החלף מצלמה</button>
-        </div>
-        <div id="foodCounter">פריטי מזון ייחודיים שזוהו: 0</div>
-        <div id="detectedFood"></div>
-        <div id="barcodeResult"></div>
-        <div id="newItemForm">
-            <input type="text" id="newItemName" placeholder="שם המוצר">
-            <button id="saveNewItem"><i class="fas fa-save"></i> שמור מוצר</button>
-        </div>
+    <h1>זיהוי אובייקטים בסיסי</h1>
+    <div id="videoContainer">
+        <video id="video" autoplay muted></video>
+        <canvas id="canvas"></canvas>
     </div>
+    <button id="startButton">התחל זיהוי</button>
+    <button id="stopButton" disabled>עצור זיהוי</button>
+    <div id="detectedObjects"></div>
 
     <script>
         let video, canvas, ctx, model, detectionInterval;
-        const uniqueFoodItems = new Set();
-        let isDetecting = false;
-        let isScanningBarcode = false;
-        let isUsingBackCamera = false;
-        const foodCounter = document.getElementById('foodCounter');
-        const detectedFoodDiv = document.getElementById('detectedFood');
-        const toggleDetectionButton = document.getElementById('toggleDetectionButton');
-        const scanBarcodeButton = document.getElementById('scanBarcodeButton');
-        const toggleCameraButton = document.getElementById('toggleCameraButton');
-        const barcodeResultDiv = document.getElementById('barcodeResult');
-        const newItemForm = document.getElementById('newItemForm');
-        const newItemNameInput = document.getElementById('newItemName');
-        const saveNewItemButton = document.getElementById('saveNewItem');
+        const startButton = document.getElementById('startButton');
+        const stopButton = document.getElementById('stopButton');
+        const detectedObjectsDiv = document.getElementById('detectedObjects');
 
-        let barcodeReader;
-        let foodList = {};
-
-        // תרגום שמות מאכלים לעברית
-        const foodTranslations = {
-            'apple': 'תפוח', 'banana': 'בננה', 'orange': 'תפוז', 'broccoli': 'ברוקולי',
-            'carrot': 'גזר', 'hot dog': 'נקניקיה', 'pizza': 'פיצה', 'donut': 'סופגנייה',
-            'cake': 'עוגה', 'sandwich': 'כריך', 'salad': 'סלט', 'bread': 'לחם',
-            'cheese': 'גבינה', 'egg': 'ביצה', 'meat': 'בשר', 'fish': 'דג',
-            'rice': 'אורז', 'pasta': 'פסטה', 'soup': 'מרק', 'sushi': 'סושי',
-            'hamburger': 'המבורגר', 'french fries': 'צ\'יפס', 'ice cream': 'גלידה',
-            'chocolate': 'שוקולד', 'cookie': 'עוגייה', 'potato': 'תפוח אדמה',
-            'tomato': 'עגבנייה', 'cucumber': 'מלפפון', 'onion': 'בצל', 'garlic': 'שום',
-            'milk': 'חלב', 'yogurt': 'יוגורט', 'butter': 'חמאה', 'olive': 'זית'
-        };
-
-        async function setupCamera(useBackCamera = false) {
+        async function setupCamera() {
             video = document.getElementById('video');
             canvas = document.getElementById('canvas');
             ctx = canvas.getContext('2d');
 
-            const constraints = {
-                video: {
-                    facingMode: useBackCamera ? 'environment' : 'user'
-                },
-                audio: false
-            };
+            const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+            video.srcObject = stream;
 
-            try {
-                if (video.srcObject) {
-                    video.srcObject.getTracks().forEach(track => track.stop());
-                }
-
-                const stream = await navigator.mediaDevices.getUserMedia(constraints);
-                video.srcObject = stream;
-                isUsingBackCamera = useBackCamera;
-
-                return new Promise((resolve) => {
-                    video.onloadedmetadata = () => {
-                        canvas.width = video.videoWidth;
-                        canvas.height = video.videoHeight;
-                        resolve(video);
-                    };
-                });
-            } catch (error) {
-                console.error('Error accessing the camera:', error);
-                alert('לא הצלחנו לגשת למצלמה. אנא ודא שיש לך הרשאות מתאימות.');
-            }
-        }
-
-        async function toggleCamera() {
-            isUsingBackCamera = !isUsingBackCamera;
-            await setupCamera(isUsingBackCamera);
-            if (isDetecting) {
-                startDetection();
-            }
-            updateToggleCameraButtonText();
-        }
-
-        function updateToggleCameraButtonText() {
-            toggleCameraButton.innerHTML = isUsingBackCamera ? 
-                '<i class="fas fa-camera-retro"></i> עבור למצלמה קדמית' : 
-                '<i class="fas fa-camera"></i> עבור למצלמה אחורית';
+            return new Promise((resolve) => {
+                video.onloadedmetadata = () => {
+                    canvas.width = video.videoWidth;
+                    canvas.height = video.videoHeight;
+                    resolve(video);
+                };
+            });
         }
 
         async function loadModel() {
             model = await cocoSsd.load();
-            toggleDetectionButton.disabled = false;
+            startButton.disabled = false;
         }
 
-        async function detectFood() {
+        async function detectObjects() {
             const predictions = await model.detect(video);
             ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
             
-            const detectedFoodSet = new Set();
+            const detectedObjectsSet = new Set();
 
             predictions.forEach(prediction => {
-                if (isFoodItem(prediction.class)) {
-                    const [x, y, width, height] = prediction.bbox;
-                    const hebrewLabel = foodTranslations[prediction.class] || prediction.class;
-                    
-                    ctx.strokeStyle = '#00FFFF';
-                    ctx.lineWidth = 4;
-                    ctx.strokeRect(x, y, width, height);
-                    
-                    ctx.fillStyle = '#00FFFF';
-                    ctx.font = '18px Arial';
-                    ctx.fillText(hebrewLabel, x, y > 10 ? y - 5 : 10);
+                const [x, y, width, height] = prediction.bbox;
+                
+                ctx.strokeStyle = '#00FFFF';
+                ctx.lineWidth = 4;
+                ctx.strokeRect(x, y, width, height);
+                
+                ctx.fillStyle = '#00FFFF';
+                ctx.font = '18px Arial';
+                ctx.fillText(prediction.class, x, y > 10 ? y - 5 : 10);
 
-                    detectedFoodSet.add(hebrewLabel);
-                    uniqueFoodItems.add(hebrewLabel);
-                }
+                detectedObjectsSet.add(prediction.class);
             });
 
-            foodCounter.textContent = `פריטי מזון ייחודיים שזוהו: ${uniqueFoodItems.size}`;
-            detectedFoodDiv.textContent = `מזון שזוהה בתמונה: ${Array.from(detectedFoodSet).join(', ')}`;
-        }
-
-        function isFoodItem(className) {
-            return foodTranslations.hasOwnProperty(className) || Object.values(foodTranslations).includes(className);
-        }
-
-        function toggleDetection() {
-            if (!isDetecting) {
-                startDetection();
-            } else {
-                stopDetection();
-            }
+            detectedObjectsDiv.textContent = `אובייקטים שזוהו: ${Array.from(detectedObjectsSet).join(', ')}`;
         }
 
         function startDetection() {
-            isDetecting = true;
-            detectionInterval = setInterval(detectFood, 500); // כ-2 FPS
-            toggleDetectionButton.innerHTML = '<i class="fas fa-stop"></i> עצור זיהוי';
-            scanBarcodeButton.disabled = false;
-            toggleCameraButton.disabled = false;
+            detectionInterval = setInterval(detectObjects, 100);
+            startButton.disabled = true;
+            stopButton.disabled = false;
         }
 
         function stopDetection() {
-            isDetecting = false;
             clearInterval(detectionInterval);
-            toggleDetectionButton.innerHTML = '<i class="fas fa-play"></i> התחל זיהוי מזון';
-            scanBarcodeButton.disabled = false;
-            toggleCameraButton.disabled = false;
             ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
-            detectedFoodDiv.textContent = '';
+            detectedObjectsDiv.textContent = '';
+            startButton.disabled = false;
+            stopButton.disabled = true;
         }
 
-        async function loadFoodList() {
-            try {
-                const response = await fetch('FOODLIST.xml');
-                const xmlText = await response.text();
-                const parser = new DOMParser();
-                const xmlDoc = parser.parseFromString(xmlText, 'text/xml');
-                const items = xmlDoc.getElementsByTagName('item');
-                
-                for (let item of items) {
-                    const barcode = item.getElementsByTagName('NUMBARCODE')[0].textContent;
-                    const name = item.getElementsByTagName('NAMEBARCODE')[0].textContent;
-                    foodList[barcode] = name;
-                }
-            } catch (error) {
-                console.error('Error loading FOODLIST.xml:', error);
-            }
+        async function init() {
+            await setupCamera();
+            await loadModel();
+            startButton.addEventListener('click', startDetection);
+            stopButton.addEventListener('click', stopDetection);
         }
 
-        async function scanBarcode() {
-            if (isScanningBarcode) return;
-            
-            isScanningBarcode = true;
-            scanBarcodeButton.disabled = true;
-            toggleCameraButton.disabled = true;
-
-            if (!barcodeReader) {
-                barcodeReader = new ZXing.BrowserMultiFormatReader();
-            }
-
-            const previousCameraState = isUsingBackCamera;
-
-            try {
-                // הפעלת המצלמה האחורית לסריקת ברקוד
-                if (!isUsingBackCamera) {
-                    await setupCamera(true);
-                    updateToggleCameraButtonText();
-                }
-
-                barcodeResultDiv.textContent = 'מסרוק ברקוד...';
-                const result = await barcodeReader.decodeOnceFromVideoDevice(undefined, 'video');
-                const barcode = result.getText();
-                
-                if (foodList[barcode]) {
-                    barcodeResultDiv.textContent = `ברקוד: ${barcode}, שם המוצר: ${foodList[barcode]}`;
-                } else {
-                    barcodeResultDiv.textContent = `ברקוד חדש: ${barcode}`;
-                    newItemForm.style.display = 'block';
-                    newItemNameInput.value = '';
-                    saveNewItemButton.onclick
+        init();
+    </script>
+</body>
+</html>
