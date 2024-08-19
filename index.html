@@ -54,6 +54,7 @@
         let video, canvas, ctx, model, detectionInterval;
         let isDetecting = false;
         let isScanning = false;
+        let stream;
         const toggleButton = document.getElementById('toggleButton');
         const scanBarcodeButton = document.getElementById('scanBarcodeButton');
         const detectedObjectsDiv = document.getElementById('detectedObjects');
@@ -67,16 +68,27 @@
             canvas = document.getElementById('canvas');
             ctx = canvas.getContext('2d');
 
-            const stream = await navigator.mediaDevices.getUserMedia({ video: true });
-            video.srcObject = stream;
+            // סגירת הזרם הקיים אם יש
+            if (stream) {
+                stream.getTracks().forEach(track => track.stop());
+            }
 
-            return new Promise((resolve) => {
-                video.onloadedmetadata = () => {
-                    canvas.width = video.videoWidth;
-                    canvas.height = video.videoHeight;
-                    resolve(video);
-                };
-            });
+            try {
+                stream = await navigator.mediaDevices.getUserMedia({ video: true });
+                video.srcObject = stream;
+
+                return new Promise((resolve) => {
+                    video.onloadedmetadata = () => {
+                        canvas.width = video.videoWidth;
+                        canvas.height = video.videoHeight;
+                        resolve(video);
+                    };
+                });
+            } catch (error) {
+                console.error('Error accessing the camera:', error);
+                alert('לא הצלחנו לגשת למצלמה. אנא ודא שיש לך הרשאות מתאימות.');
+                throw error;
+            }
         }
 
         async function loadModel() {
@@ -107,8 +119,9 @@
             detectedObjectsDiv.textContent = `אובייקטים שזוהו: ${Array.from(detectedObjectsSet).join(', ')}`;
         }
 
-        function toggleDetection() {
+        async function toggleDetection() {
             if (!isDetecting) {
+                await setupCamera(); // פותח מחדש את המצלמה בכל לחיצה
                 startDetection();
             } else {
                 stopDetection();
@@ -149,6 +162,7 @@
 
         async function toggleBarcodeScanning() {
             if (!isScanning) {
+                await setupCamera(); // פותח מחדש את המצלמה
                 startBarcodeScanning();
             } else {
                 stopBarcodeScanning();
@@ -188,7 +202,6 @@
         }
 
         async function init() {
-            await setupCamera();
             await loadModel();
             await loadFoodList();
             toggleButton.addEventListener('click', toggleDetection);
