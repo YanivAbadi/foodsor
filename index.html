@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>זיהוי פירות במצלמה עם TensorFlow.js</title>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/mobilenet"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+            background-color: #f0f0f0;
+        }
+        .container {
+            text-align: center;
+            background-color: white;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 0 10px rgba(0,0,0,0.1);
+        }
+        button {
+            margin: 10px;
+            padding: 10px 20px;
+            font-size: 16px;
+            cursor: pointer;
+        }
+        #result {
+            margin-top: 20px;
+            font-weight: bold;
+        }
+        #camera {
+            width: 320px;
+            height: 240px;
+            border: 1px solid #ccc;
+            margin: 20px auto;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>זיהוי פירות במצלמה</h1>
+        <button onclick="openCamera()">פתח מצלמה</button>
+        <button onclick="closeCamera()">סגור מצלמה</button>
+        <video id="camera" autoplay></video>
+        <div id="result"></div>
+    </div>
+
+    <script>
+        let isCameraOpen = false;
+        let model;
+        let videoElement;
+
+        // טעינת המודל
+        async function loadModel() {
+            model = await mobilenet.load();
+            console.log('מודל MobileNet נטען');
+        }
+
+        loadModel();
+
+        async function openCamera() {
+            if (!isCameraOpen) {
+                videoElement = document.getElementById('camera');
+                videoElement.style.display = 'block';
+
+                try {
+                    const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+                    videoElement.srcObject = stream;
+                    isCameraOpen = true;
+                    identifyFruit();
+                } catch (error) {
+                    console.error('שגיאה בפתיחת המצלמה:', error);
+                    document.getElementById('result').innerHTML = 'שגיאה בפתיחת המצלמה';
+                }
+            }
+        }
+
+        function closeCamera() {
+            if (isCameraOpen) {
+                const stream = videoElement.srcObject;
+                const tracks = stream.getTracks();
+                tracks.forEach(track => track.stop());
+                videoElement.style.display = 'none';
+                document.getElementById('result').innerHTML = '';
+                isCameraOpen = false;
+            }
+        }
+
+        async function identifyFruit() {
+            if (isCameraOpen && model) {
+                const result = await model.classify(videoElement);
+                const fruitResult = result.find(item => isFruit(item.className));
+                
+                if (fruitResult) {
+                    document.getElementById('result').innerHTML = `זוהה פרי: ${hebrewFruitName(fruitResult.className)}`;
+                } else {
+                    document.getElementById('result').innerHTML = 'פרי לא מזוהה';
+                }
+
+                // המשך לזהות כל 3 שניות
+                setTimeout(identifyFruit, 3000);
+            }
+        }
+
+        function isFruit(className) {
+            // רשימה חלקית של פירות באנגלית
+            const fruits = ['apple', 'banana', 'orange', 'strawberry', 'grape', 'pineapple', 'peach', 'pear', 'mango'];
+            return fruits.some(fruit => className.toLowerCase().includes(fruit));
+        }
+
+        function hebrewFruitName(englishName) {
+            // ממיר שמות פירות נפוצים לעברית
+            const fruitNames = {
+                'apple': 'תפוח',
+                'banana': 'בננה',
+                'orange': 'תפוז',
+                'strawberry': 'תות',
+                'grape': 'ענב',
+                'pineapple': 'אננס',
+                'peach': 'אפרסק',
+                'pear': 'אגס',
+                'mango': 'מנגו'
+            };
+
+            for (let fruit in fruitNames) {
+                if (englishName.toLowerCase().includes(fruit)) {
+                    return fruitNames[fruit];
+                }
+            }
+            return englishName; // אם אין תרגום, מחזיר את השם באנגלית
+        }
+    </script>
+</body>
+</html>
